@@ -1,0 +1,28 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Terraform variable files with environment-specific values
+*.tfvars
+*.tfvars.json
+
+# Terraform plan files
+*.tfplan
+*.tfplan.json
+
+# Sensitive/local files
+*.pem
+*.key
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project notes
+**/ReadMe.md
