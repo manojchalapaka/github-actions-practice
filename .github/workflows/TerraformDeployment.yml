@@ -1,3 +1,4 @@
+```yaml
 name: Terraform Deployment Pipeline For AWS Batch 73
 
 on:
@@ -204,4 +205,51 @@ jobs:
           fi
 
 
+  terraform-destroy:
+    if: ${{ vars.TERRAFORM_DESTROY == 'YES' }}
+    name: 'Stage 5 - Terraform Destroy'
+    runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+
+    steps:
+
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+
+      - name: Print Runner Hostname
+        run: echo $HOSTNAME
+
+      - name: Print Branch Name
+        run: echo ${GITHUB_REF}
+
+      - name: Terraform Init, Format, Validate
+        run: |
+          terraform init
+          terraform fmt
+          terraform validate
+
+      - name: Terraform Destroy
+        run: |
+          if [ "${GITHUB_REF}" == "refs/heads/development" ]; then
+            echo "Running Terraform Destroy For Development Environment"
+            terraform workspace select development
+            terraform destroy --var-file=Bravo.tfvars -auto-approve
+
+          elif [ "${GITHUB_REF}" == "refs/heads/production" ]; then
+            echo "Running Terraform Destroy For Production Environment"
+            terraform workspace select production
+            terraform destroy --var-file=Alpha.tfvars -auto-approve
+
+          else
+            echo "Nothing Is Destroyed As The Branch Is Not Development or Production."
+            exit 1
+          fi
+```
