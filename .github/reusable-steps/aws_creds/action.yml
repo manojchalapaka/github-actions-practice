@@ -1,72 +1,57 @@
 name: Configure AWS Credentials Using OIDC
-description: Configure AWS credentials using GitHub OIDC and cross-account role chaining
+description: GitHub OIDC -> source AWS role -> target cross-account role (role chaining)
 
 inputs:
-  target-role-arn:
-    description: Target cross-account IAM role ARN
+  source-role-arn:
+    description: Role in the central account that trusts GitHub OIDC
     required: true
-
+  target-role-arn:
+    description: Cross-account role to assume from the source role
+    required: true
   aws-region:
     description: AWS region
     required: true
+  debug-claims:
+    description: Print OIDC iss/aud/sub claims (for troubleshooting only)
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
-
-    - name: Show GitHub OIDC Claims
+    - name: Show GitHub OIDC claims (debug)
+      if: ${{ inputs.debug-claims == 'true' }}
       shell: bash
       run: |
-        set +e
-
-        echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
-        echo "GITHUB_REF=${GITHUB_REF}"
-        echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
-        echo "GITHUB_EVENT_NAME=${GITHUB_EVENT_NAME}"
-
         RESPONSE=$(curl -sS \
           -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
           "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
-
-        OIDC_TOKEN=$(echo "$RESPONSE" | jq -r '.value')
-
-        if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
-          echo "OIDC token was not returned."
-          echo "$RESPONSE" | jq '{error, error_description}'
+        TOKEN=$(echo "$RESPONSE" | jq -r '.value')
+        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          echo "No OIDC token. Check 'permissions: id-token: write' in the workflow."
           exit 1
         fi
+        PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
+        # restore base64 padding
+        while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do PAYLOAD="${PAYLOAD}="; done
+        echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub}'
 
-        PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
-
-        echo "$PAYLOAD" | base64 -d 2>/dev/null | jq '{iss, aud, sub}' || true
-
-    - name: Configure Source AWS Credentials Using OIDC
+    - name: Assume source role via OIDC
       uses: aws-actions/configure-aws-credentials@v5
       with:
-        role-to-assume: arn:aws:iam::648377377983:role/awsb73-github-actions-oidc-role
-        role-session-name: github-actions-oidc-role
+        role-to-assume: ${{ inputs.source-role-arn }}
+        role-session-name: gha-source-${{ github.run_id }}
         aws-region: ${{ inputs.aws-region }}
 
-    - name: Configure Target Cross Account Role
+    - name: Assume target cross-account role
       uses: aws-actions/configure-aws-credentials@v5
       with:
         role-to-assume: ${{ inputs.target-role-arn }}
-        role-session-name: github-actions-cross-account-role
+        role-session-name: gha-target-${{ github.run_id }}
         role-chaining: true
         role-skip-session-tagging: true
         aws-region: ${{ inputs.aws-region }}
 
-    - name: Verify AWS Identity
+    - name: Verify AWS identity
       shell: bash
       run: aws sts get-caller-identity
-
-# OIDC trust policy validation
-# Batch 73 AWS OIDC Cross Account Authentication Flow
-# GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform
-
-# OIDC diagnostic update - Batch 73
-# OIDC trust policy updated - test run
-# Test source OIDC role
-# Cross account TagSession enabled
-# Verify cross account AssumeRole
-# Verify cross account AssumeRole

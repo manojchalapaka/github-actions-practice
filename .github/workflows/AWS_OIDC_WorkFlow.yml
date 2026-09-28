@@ -1,246 +1,248 @@
 name: Terraform Deployment Pipeline With OIDC & Reusable Steps For Batch 73
 
+# Required repo/org VARIABLES (Settings > Secrets and variables > Actions > Variables):
+#   AWS_REGION            us-east-1
+#   TERRAFORM_DESTROY     NO
+#   SOURCE_ROLE_ARN       arn:aws:iam::648377377983:role/awsb73-github-actions-oidc-role
+#   DEV_TARGET_ROLE_ARN   arn:aws:iam::707256068335:role/awsb73-cross-account-role   (Bravo / development)
+#   PROD_TARGET_ROLE_ARN  arn:aws:iam::886312446008:role/awsb73-cross-account-role   (Alpha / production)
+#   CHECKOV_BUCKET        awsb73-terraform-modules
+
 on:
   pull_request:
-    types:
-      - closed
-    branches:
-      - production
-    paths-ignore:
-      - 'ReadMe.md'
-
+    types: [closed]
+    branches: [production]
+    paths-ignore: ['ReadMe.md']
   push:
-    branches:
-      - development
-    paths-ignore:
-      - 'ReadMe.md'
+    branches: [development]
+    paths-ignore: ['ReadMe.md']
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.base_ref || github.ref_name }}
+  cancel-in-progress: false   # never cancel a running apply/destroy
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
-  ENV_DESTROY_DEV: "YES"
-  ENV_DESTROY_PROD: "YES"
-  TERRAFORM_DESTROY: ${{ vars.TERRAFORM_DESTROY }}
   TERRAFORM_VERSION: "1.14.1"
-
-permissions:
-  id-token: write
-  contents: read
+  TF_DIR: ./TerraformWorkspaces/Alpha-Bravo
+  TF_IN_AUTOMATION: "true"
 
 jobs:
-
-  terraform-checkov:
-    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
-    name: Stage_1 - Checkov Security Scanning For Terraform Code
+  # ---------------------------------------------------------------
+  # Decide environment, role, workspace and tfvars ONE time
+  # ---------------------------------------------------------------
+  prepare:
+    name: Stage_0 - Resolve Target Environment
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    outputs:
+      deploy: ${{ steps.resolve.outputs.deploy }}
+      role_arn: ${{ steps.resolve.outputs.role_arn }}
+      workspace: ${{ steps.resolve.outputs.workspace }}
+      tfvars: ${{ steps.resolve.outputs.tfvars }}
+      env_name: ${{ steps.resolve.outputs.env_name }}
     steps:
-      - name: Checkout The Code Repository
-        uses: actions/checkout@v5
+      - name: Resolve environment
+        id: resolve
+        shell: bash
+        env:
+          DEV_ROLE: ${{ vars.DEV_TARGET_ROLE_ARN }}
+          PROD_ROLE: ${{ vars.PROD_TARGET_ROLE_ARN }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/development" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/development" ]]; then
+            echo "deploy=true"          >> "$GITHUB_OUTPUT"
+            echo "env_name=Bravo-dev"   >> "$GITHUB_OUTPUT"
+            echo "workspace=dev"        >> "$GITHUB_OUTPUT"
+            echo "tfvars=Bravo.tfvars"  >> "$GITHUB_OUTPUT"
+            echo "role_arn=$DEV_ROLE"   >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" ]]; then
+            echo "deploy=true"          >> "$GITHUB_OUTPUT"
+            echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
+            echo "workspace=prod"       >> "$GITHUB_OUTPUT"
+            echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
+            echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Not development or production. Nothing to do."
+          fi
+
+  # ---------------------------------------------------------------
+  # Stage 1 - Checkov
+  # ---------------------------------------------------------------
+  terraform-checkov:
+    name: Stage_1 - Checkov Security Scanning
+    needs: prepare
+    if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
       - name: Configure AWS Credentials
         uses: ./.github/reusable-steps/aws_creds
         with:
+          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
+          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
-      - name: Print Runner Hostname
-        run: echo "$HOSTNAME"
-      - name: Setup Checkov For Security Scanning
+
+      - name: Run Checkov
         uses: bridgecrewio/checkov-action@v12
         with:
-          directory: ./TerraformWorkspaces/Alpha-Bravo
+          directory: ${{ env.TF_DIR }}
           quiet: true
           soft_fail: true
           output_format: cli,json
-          output_file_path: console,./TerraformWorkspaces/Alpha-Bravo/results.json
+          output_file_path: console,checkov-results
+
+      - name: List Checkov output
+        run: ls -R "${{ github.workspace }}/checkov-results" || true
+
       - name: Upload Checkov Results To S3
-        run: aws s3 cp ./results.json s3://awsb73-terraform-modules/checkov-results/results.json
+        run: |
+          aws s3 cp "${{ github.workspace }}/checkov-results/results_json.json" \
+            "s3://${{ vars.CHECKOV_BUCKET }}/checkov-results/${{ needs.prepare.outputs.workspace }}/${{ github.run_id }}/results.json"
 
-
+  # ---------------------------------------------------------------
+  # Stage 2 - Init / fmt / validate / workspace
+  # ---------------------------------------------------------------
   terraform-initiate:
-    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
-    name: Stage_2 - Terraform Initialization, Formatting, Validation, And Workspace Creation
+    name: Stage_2 - Init, Format, Validate, Workspace
+    needs: [prepare, terraform-checkov]
+    if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
     runs-on: ubuntu-latest
-    needs: terraform-checkov
     defaults:
       run:
-        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+        working-directory: ${{ env.TF_DIR }}
     steps:
-      - name: Checkout The Code Repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+
       - name: Configure AWS Credentials
         uses: ./.github/reusable-steps/aws_creds
         with:
+          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
+          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "${{ env.TERRAFORM_VERSION }}"
-      - name: Print Runner Hostname
-        run: echo "$HOSTNAME"
-      - name: Print Branch Name
-        run: echo "$GITHUB_REF"
-      - name: Terraform Init
-        run: terraform init
-      - name: Terraform Format
-        run: terraform fmt
-      - name: Terraform Validate
-        run: terraform validate
-      - name: Creating Terraform Workspaces
-        run: |
-          terraform workspace select dev || terraform workspace new dev
-          terraform workspace select prod || terraform workspace new prod
-      - name: List Terraform Workspaces
-        run: terraform workspace list
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - run: terraform init -input=false
+      - run: terraform fmt -check -recursive
+      - run: terraform validate
+      - name: Select or create workspace
+        run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
+      - run: terraform workspace list
 
+  # ---------------------------------------------------------------
+  # Stage 3 - Plan (saved as an artifact, reused by apply)
+  # ---------------------------------------------------------------
   terraform-plan:
-    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
     name: Stage_3 - Terraform Plan
+    needs: [prepare, terraform-initiate]
+    if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
     runs-on: ubuntu-latest
-    needs: terraform-initiate
     defaults:
       run:
-        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+        working-directory: ${{ env.TF_DIR }}
     steps:
-      - name: Checkout The Code Repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+
       - name: Configure AWS Credentials
         uses: ./.github/reusable-steps/aws_creds
         with:
+          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
+          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "${{ env.TERRAFORM_VERSION }}"
-      - name: Print Runner Hostname
-        run: echo "$HOSTNAME"
-      - name: Print Branch Name
-        run: echo "$GITHUB_REF"
-      - name: Terraform Init
-        run: terraform init
-      - name: Terraform Format
-        run: terraform fmt
-      - name: Terraform Validate
-        run: terraform validate
-      - name: Print Branch Reference
-        run: echo "The Current Branch Is $GITHUB_REF"
-      - name: Terraform Plan
-        shell: bash
-        run: |
-          echo "ENV_DESTROY_DEV: ${{ env.ENV_DESTROY_DEV }}"
-          echo "ENV_DESTROY_PROD: ${{ env.ENV_DESTROY_PROD }}"
-          if [[ "$GITHUB_REF" == "refs/heads/development" && "${{ env.ENV_DESTROY_DEV }}" == "NO" ]]; then
-            echo "Running Terraform Plan For Development / Bravo"
-            terraform workspace select dev
-            terraform plan --var-file=Bravo.tfvars
-          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" && "${{ env.ENV_DESTROY_PROD }}" == "NO" ]]; then
-            echo "Running Terraform Plan For Production / Alpha"
-            terraform workspace select prod
-            terraform plan --var-file=Alpha.tfvars
-          else
-            echo "Nothing Is Deployed As The Branch Is Not Development Or Production."
-          fi
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - run: terraform init -input=false
+      - run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
 
+      - name: Terraform Plan (${{ needs.prepare.outputs.env_name }})
+        run: terraform plan -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -out=tfplan
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ needs.prepare.outputs.workspace }}
+          path: ${{ env.TF_DIR }}/tfplan
+          retention-days: 3
+
+  # ---------------------------------------------------------------
+  # Stage 4 - Apply (uses the exact reviewed plan)
+  # ---------------------------------------------------------------
   terraform-apply:
-    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
     name: Stage_4 - Terraform Apply
+    needs: [prepare, terraform-plan]
+    if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
     runs-on: ubuntu-latest
-    needs: terraform-plan
     defaults:
       run:
-        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+        working-directory: ${{ env.TF_DIR }}
     steps:
-      - name: Checkout The Code Repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+
       - name: Configure AWS Credentials
         uses: ./.github/reusable-steps/aws_creds
         with:
+          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
+          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "${{ env.TERRAFORM_VERSION }}"
-      - name: Print Runner Hostname
-        run: echo "$HOSTNAME"
-      - name: Print Branch Name
-        run: echo "$GITHUB_REF"
-      - name: Terraform Init
-        run: terraform init
-      - name: Terraform Format
-        run: terraform fmt
-      - name: Terraform Validate
-        run: terraform validate
-      - name: Print Branch Reference
-        run: echo "The Current Branch Is $GITHUB_REF"
-      - name: Terraform Apply
-        shell: bash
-        run: |
-          echo "ENV_DESTROY_DEV: ${{ env.ENV_DESTROY_DEV }}"
-          echo "ENV_DESTROY_PROD: ${{ env.ENV_DESTROY_PROD }}"
-          if [[ "$GITHUB_REF" == "refs/heads/development" && "${{ env.ENV_DESTROY_DEV }}" == "NO" ]]; then
-            echo "Running Terraform Apply For Development / Bravo"
-            terraform workspace select dev
-            terraform apply --var-file=Bravo.tfvars --auto-approve
-          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" && "${{ env.ENV_DESTROY_PROD }}" == "NO" ]]; then
-            echo "Running Terraform Apply For Production / Alpha"
-            terraform workspace select prod
-            terraform apply --var-file=Alpha.tfvars --auto-approve
-          else
-            echo "Nothing Is Deployed As The Branch Is Not Development Or Production."
-          fi
-      - name: List Terraform Created Resources
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.prepare.outputs.workspace }}
+          path: ${{ env.TF_DIR }}
+
+      - run: terraform init -input=false
+      - run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
+
+      - name: Terraform Apply (${{ needs.prepare.outputs.env_name }})
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: List resources
         run: terraform state list
 
-
+  # ---------------------------------------------------------------
+  # Stage 5 - Destroy (only when TERRAFORM_DESTROY == YES)
+  # ---------------------------------------------------------------
   terraform-destroy:
-    if: ${{ vars.TERRAFORM_DESTROY == 'YES' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
     name: Stage_5 - Terraform Destroy
+    needs: prepare
+    if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'YES' }}
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+        working-directory: ${{ env.TF_DIR }}
     steps:
-      - name: Checkout The Code Repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+
       - name: Configure AWS Credentials
         uses: ./.github/reusable-steps/aws_creds
         with:
+          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
+          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "${{ env.TERRAFORM_VERSION }}"
-      - name: Print Runner Hostname
-        run: echo "$HOSTNAME"
-      - name: Print Branch Name
-        run: echo "$GITHUB_REF"
-      - name: Terraform Init
-        run: terraform init
-      - name: Terraform Format
-        run: terraform fmt
-      - name: Terraform Validate
-        run: terraform validate
-      - name: Print Branch Reference
-        run: echo "The Current Branch Is $GITHUB_REF"
-      - name: Perform Terraform Destroy
-        shell: bash
-        run: |
-          echo "ENV_DESTROY_DEV: ${{ env.ENV_DESTROY_DEV }}"
-          echo "ENV_DESTROY_PROD: ${{ env.ENV_DESTROY_PROD }}"
-          if [[ "$GITHUB_REF" == "refs/heads/development" && "${{ env.ENV_DESTROY_DEV }}" == "YES" ]]; then
-            echo "Running Terraform Destroy For Development / Bravo"
-            terraform workspace select dev
-            terraform destroy --var-file=Bravo.tfvars --auto-approve
-          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" && "${{ env.ENV_DESTROY_PROD }}" == "YES" ]]; then
-            echo "Running Terraform Destroy For Production / Alpha"
-            terraform workspace select prod
-            terraform destroy --var-file=Alpha.tfvars --auto-approve
-          else
-            echo "Nothing Is Destroyed As The Branch Is Not Development Or Production."
-          fi
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - run: terraform init -input=false
+      - run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
+
+      - name: Terraform Destroy (${{ needs.prepare.outputs.env_name }})
+        run: terraform destroy -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -auto-approve
