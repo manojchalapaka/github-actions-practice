@@ -61,4 +61,4 @@ runs:
 
 # OIDC trust policy validation
 # Batch 73 AWS OIDC Cross Account Authentication Flow
-# GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform
+# GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform# OIDC diagnostic update - Batch 73
