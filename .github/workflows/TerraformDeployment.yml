@@ -36,6 +36,7 @@ jobs:
     defaults:
       run:
         working-directory: ./TerraformWorkspaces/Alpha-Bravo
+
     steps:
       - name: Checkout The Code Repository
         uses: actions/checkout@v5
@@ -54,4 +55,4 @@ jobs:
 
       - name: Upload Checkov Results to S3 Bucket
         run: |
-          aws s3 cp ./TerraformWorkspaces/Alpha-Bravo/results.json s3://awsb73-terraform-modules-bucket/checkov-results/results.json
+          aws s3 cp ./results.json s3://awsb73-terraform-modules-bucket/checkov-results/results.json
