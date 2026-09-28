@@ -1,7 +1,7 @@
 #Disabled while testing gitlab pipeline to avoid delay.
 module "alpha_rds" {
   count                  = var.create_rds ? 1 : 0
-  source                 = "../modules/10.rds"
+  source                 = "../modules/rds"
   db_subnet_group_name   = var.db_subnet_group_name
   private_subnets        = module.alpha_vpc_1.private_subnets_id
   allocated_storage      = var.allocated_storage
@@ -14,6 +14,7 @@ module "alpha_rds" {
   username               = var.username
   password               = module.alpha_secret_rds.rds_secret
 }
+
 
 
 

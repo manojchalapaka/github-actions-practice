@@ -14,8 +14,9 @@ terraform {
     }
   }
   backend "s3" {
-    bucket = "awsb73-terraform-modules"
+    bucket = "awsb73-terraform-state-648377377983"
     key    = "customer_workspace_awsb72.tfstate"
     region = "us-east-1"
   }
 }
+

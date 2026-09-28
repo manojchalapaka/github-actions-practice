@@ -1,5 +1,5 @@
 module "alpha_compute_1" {
-  source      = "../modules/5.compute"
+  source      = "../modules/compute"
   environment = module.alpha_vpc_1.environment
   amis = {
     us-east-1 = "ami-0c7217cdde317cfec" # ubuntu 20.04 LTS

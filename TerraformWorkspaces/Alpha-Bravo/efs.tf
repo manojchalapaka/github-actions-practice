@@ -2,7 +2,7 @@
 
 module "alpha_efs_1" {
   count       = var.create_efs ? 1 : 0
-  source      = "../modules/12.efs"
+  source      = "../modules/efs"
   environment = module.alpha_vpc_1.environment
   efs_name    = var.efs_name
 }

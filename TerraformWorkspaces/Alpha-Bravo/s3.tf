@@ -9,9 +9,10 @@ resource "random_integer" "priority" {
 }
 
 module "alpha_s3" {
-  source      = "../modules/11.s3"
+  source      = "../modules/s3"
   environment = lower(module.alpha_vpc_1.environment)
   bucket_name = local.bucket_name
 }
+
 
 

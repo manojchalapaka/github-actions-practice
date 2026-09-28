@@ -13,12 +13,6 @@ variable "iam_policy_name" {}
 variable "instance_type" {}
 variable "key_name" {}
 variable "project_name" {}
-variable "albname" {}
-variable "albtgname" {}
-variable "alb_certificate_arn" {}
-variable "nlbname" {}
-variable "nlbtgname" {}
-variable "domainname" {}
 variable "db_subnet_group_name" {}
 variable "allocated_storage" {}
 variable "engine" {}
@@ -32,9 +26,4 @@ variable "assume_rolename" {}
 variable "create_efs" {}
 variable "create_rds" {}
 variable "efs_name" {}
-variable "create_nlb" {}
-variable "create_alb" {}
-
-
-
 
