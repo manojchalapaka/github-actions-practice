@@ -53,12 +53,5 @@ jobs:
           output_file_path: console,./TerraformWorkspaces/Alpha-Bravo/results.json
 
       - name: Upload Checkov Results to S3 Bucket
-        uses: koraykoska/s3-upload-github-action@master
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-          s3-endpoint: 's3.us-east-1.amazonaws.com'
-          s3-bucket: "awsb73-terraform-modules-bucket"
-          source-dir: './TerraformWorkspaces/Alpha-Bravo/results.json'
-          destination-dir: 'checkov-results/'
+        run: |
+          aws s3 cp ./TerraformWorkspaces/Alpha-Bravo/results.json s3://awsb73-terraform-modules-bucket/checkov-results/results.json
