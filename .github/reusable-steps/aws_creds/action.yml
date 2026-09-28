@@ -17,14 +17,28 @@ runs:
     - name: Show GitHub OIDC Claims
       shell: bash
       run: |
-        OIDC_TOKEN=$(curl -sS \
-          -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
-          | jq -r '.value')
+        set +e
 
-        PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null)
+        echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
+        echo "GITHUB_REF=${GITHUB_REF}"
+        echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
+        echo "GITHUB_EVENT_NAME=${GITHUB_EVENT_NAME}"
 
-        echo "$PAYLOAD" | jq '{iss, aud, sub}'
+        RESPONSE=$(curl -sS \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+
+        OIDC_TOKEN=$(echo "$RESPONSE" | jq -r '.value')
+
+        if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
+          echo "OIDC token was not returned."
+          echo "$RESPONSE" | jq '{error, error_description}'
+          exit 1
+        fi
+
+        PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d '.' -f 2)
+
+        echo "$PAYLOAD" | base64 -d 2>/dev/null | jq '{iss, aud, sub}'
 
     - name: Configure Source AWS Credentials Using OIDC
       uses: aws-actions/configure-aws-credentials@v5
