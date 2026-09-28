@@ -24,10 +24,11 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ENV_DESTROY: "YES"
   TERRAFORM_DESTROY: ${{ vars.TERRAFORM_DESTROY }}
-  TERRAFORM_VERSION: "1.13.4"
+  TERRAFORM_VERSION: "1.14.0"
 
 
 jobs:
+
   terraform-checkov:
     if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
     name: 'Stage 1 - Checkov Security Scanning For Terraform Code'
@@ -56,3 +57,40 @@ jobs:
       - name: Upload Checkov Results to S3 Bucket
         run: |
           aws s3 cp ./results.json s3://awsb73-terraform-modules-bucket/checkov-results/results.json
+
+
+  terraform-initiate:
+    if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
+    name: 'Stage 2 - Terraform Initialization'
+    runs-on: ubuntu-latest
+    needs: terraform-checkov
+
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+
+      - name: Print Runner Hostname
+        run: echo $HOSTNAME
+
+      - name: Print Branch Name
+        run: echo ${GITHUB_REF}
+
+      - name: Terraform Init, Format, Validate
+        run: terraform init && terraform fmt && terraform validate
+
+      - name: Creating Terraform Workspaces
+        run: |
+          terraform workspace select development || terraform workspace new development
+          terraform workspace select production || terraform workspace new production
+
+      - name: List Terraform Workspaces
+        run: terraform workspace list
