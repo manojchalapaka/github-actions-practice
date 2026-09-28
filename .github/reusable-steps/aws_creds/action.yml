@@ -64,3 +64,4 @@ runs:
 # GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform# OIDC diagnostic update - Batch 73
 # OIDC trust policy updated - test run
 # Test source OIDC role
+# Cross account TagSession enabled
