@@ -163,7 +163,7 @@ jobs:
 
   terraform-destroy:
     if: ${{ vars.TERRAFORM_DESTROY == 'YES' }}
-    name: 'Stage 5 - Terraform Destroy Resources'
+    name: 'Stage 5 - Terraform Destroy Production Resources'
     runs-on: ubuntu-latest
     defaults:
       run:
