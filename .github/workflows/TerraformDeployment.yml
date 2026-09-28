@@ -35,8 +35,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./Alpha-Bravo
-
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
     steps:
       - name: Checkout The Code Repository
         uses: actions/checkout@v5
@@ -47,11 +46,11 @@ jobs:
       - name: Setup Checkov For Security Scanning
         uses: bridgecrewio/checkov-action@v12
         with:
-          directory: ./Alpha-Bravo
+          directory: ./TerraformWorkspaces/Alpha-Bravo
           quiet: true
           soft_fail: true
           output_format: cli,json
-          output_file_path: console,./Alpha-Bravo/results.json
+          output_file_path: console,./TerraformWorkspaces/Alpha-Bravo/results.json
 
       - name: Upload Checkov Results to S3 Bucket
         uses: koraykoska/s3-upload-github-action@master
@@ -61,5 +60,5 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           s3-endpoint: 's3.us-east-1.amazonaws.com'
           s3-bucket: "awsb73-terraform-modules-bucket"
-          source-dir: './Alpha-Bravo/results.json'
+          source-dir: './TerraformWorkspaces/Alpha-Bravo/results.json'
           destination-dir: 'checkov-results/'
