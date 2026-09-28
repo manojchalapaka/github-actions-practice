@@ -53,6 +53,7 @@ runs:
         role-to-assume: ${{ inputs.target-role-arn }}
         role-session-name: github-actions-cross-account-role
         role-chaining: true
+        role-skip-session-tagging: true
         aws-region: ${{ inputs.aws-region }}
 
     - name: Verify AWS Identity
@@ -61,7 +62,9 @@ runs:
 
 # OIDC trust policy validation
 # Batch 73 AWS OIDC Cross Account Authentication Flow
-# GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform# OIDC diagnostic update - Batch 73
+# GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform
+
+# OIDC diagnostic update - Batch 73
 # OIDC trust policy updated - test run
 # Test source OIDC role
 # Cross account TagSession enabled
