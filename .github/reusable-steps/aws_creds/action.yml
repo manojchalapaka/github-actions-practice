@@ -55,3 +55,4 @@ runs:
     - name: Verify AWS identity
       shell: bash
       run: aws sts get-caller-identity
+# Trigger workflow after repository variables update
