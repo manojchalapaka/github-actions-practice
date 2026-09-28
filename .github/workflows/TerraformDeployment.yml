@@ -39,6 +39,7 @@ jobs:
         working-directory: ./TerraformWorkspaces/Alpha-Bravo
 
     steps:
+
       - name: Checkout The Code Repository
         uses: actions/checkout@v5
 
@@ -70,7 +71,8 @@ jobs:
         working-directory: ./TerraformWorkspaces/Alpha-Bravo
 
     steps:
-      - name: Checkout
+
+      - name: Checkout The Code Repository
         uses: actions/checkout@v5
 
       - name: Setup Terraform
@@ -85,7 +87,10 @@ jobs:
         run: echo ${GITHUB_REF}
 
       - name: Terraform Init, Format, Validate
-        run: terraform init && terraform fmt && terraform validate
+        run: |
+          terraform init
+          terraform fmt
+          terraform validate
 
       - name: Creating Terraform Workspaces
         run: |
@@ -107,7 +112,8 @@ jobs:
         working-directory: ./TerraformWorkspaces/Alpha-Bravo
 
     steps:
-      - name: Checkout
+
+      - name: Checkout The Code Repository
         uses: actions/checkout@v5
 
       - name: Setup Terraform
@@ -122,22 +128,80 @@ jobs:
         run: echo ${GITHUB_REF}
 
       - name: Terraform Init, Format, Validate
-        run: terraform init && terraform fmt && terraform validate
+        run: |
+          terraform init
+          terraform fmt
+          terraform validate
 
       - name: Print Branch Reference
         run: echo "The Current Branch Is $GITHUB_REF"
 
       - name: Terraform Plan
-        if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
         run: |
           if [ "${GITHUB_REF}" == "refs/heads/development" ]; then
             echo "Running Terraform Plan For Development Environment"
             terraform workspace select development
             terraform plan --var-file=Bravo.tfvars
+
           elif [ "${GITHUB_REF}" == "refs/heads/production" ]; then
             echo "Running Terraform Plan For Production Environment"
             terraform workspace select production
             terraform plan --var-file=Alpha.tfvars
+
           else
             echo "Nothing Is Deployed As The Branch Is Not Development or Production."
+            exit 1
           fi
+
+
+  terraform-apply:
+    if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
+    name: 'Stage 4 - Terraform Apply'
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+
+    steps:
+
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+
+      - name: Print Runner Hostname
+        run: echo $HOSTNAME
+
+      - name: Print Branch Name
+        run: echo ${GITHUB_REF}
+
+      - name: Terraform Init, Format, Validate
+        run: |
+          terraform init
+          terraform fmt
+          terraform validate
+
+      - name: Terraform Apply
+        run: |
+          if [ "${GITHUB_REF}" == "refs/heads/development" ]; then
+            echo "Running Terraform Apply For Development Environment"
+            terraform workspace select development
+            terraform apply --var-file=Bravo.tfvars -auto-approve
+
+          elif [ "${GITHUB_REF}" == "refs/heads/production" ]; then
+            echo "Running Terraform Apply For Production Environment"
+            terraform workspace select production
+            terraform apply --var-file=Alpha.tfvars -auto-approve
+
+          else
+            echo "Nothing Is Deployed As The Branch Is Not Development or Production."
+            exit 1
+          fi
+
+
+
