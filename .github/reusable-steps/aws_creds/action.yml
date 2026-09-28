@@ -1,0 +1,34 @@
+name: Configure AWS Credentials Using OIDC
+description: Configure AWS credentials using GitHub OIDC and cross-account role chaining
+
+inputs:
+  target-role-arn:
+    description: Target cross-account IAM role ARN
+    required: true
+
+  aws-region:
+    description: AWS region
+    required: true
+
+runs:
+  using: composite
+  steps:
+
+    - name: Configure Source AWS Credentials Using OIDC
+      uses: aws-actions/configure-aws-credentials@v5
+      with:
+        role-to-assume: arn:aws:iam::648377377983:role/awsb73-github-actions-oidc-role
+        role-session-name: github-actions-oidc-role
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Configure Target Cross Account Role
+      uses: aws-actions/configure-aws-credentials@v5
+      with:
+        role-to-assume: ${{ inputs.target-role-arn }}
+        role-session-name: github-actions-cross-account-role
+        role-chaining: true
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Verify AWS Identity
+      shell: bash
+      run: aws sts get-caller-identity
