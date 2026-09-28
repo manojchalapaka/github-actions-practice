@@ -65,3 +65,5 @@ runs:
 # OIDC trust policy updated - test run
 # Test source OIDC role
 # Cross account TagSession enabled
+# Verify cross account AssumeRole
+# Verify cross account AssumeRole
