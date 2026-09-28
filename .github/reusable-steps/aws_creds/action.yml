@@ -42,3 +42,5 @@ runs:
       run: aws sts get-caller-identity
 
 # OIDC trust policy validation
+# Batch 73 AWS OIDC Cross Account Authentication Flow
+# GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform
