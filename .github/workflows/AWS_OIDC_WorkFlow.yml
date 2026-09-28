@@ -1,0 +1,246 @@
+name: Terraform Deployment Pipeline With OIDC & Reusable Steps For Batch 73
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - production
+    paths-ignore:
+      - 'ReadMe.md'
+
+  push:
+    branches:
+      - development
+    paths-ignore:
+      - 'ReadMe.md'
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ENV_DESTROY_DEV: "YES"
+  ENV_DESTROY_PROD: "YES"
+  TERRAFORM_DESTROY: ${{ vars.TERRAFORM_DESTROY }}
+  TERRAFORM_VERSION: "1.14.1"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+
+  terraform-checkov:
+    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
+    name: Stage_1 - Checkov Security Scanning For Terraform Code
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+    steps:
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
+      - name: Print Runner Hostname
+        run: echo "$HOSTNAME"
+      - name: Setup Checkov For Security Scanning
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ./TerraformWorkspaces/Alpha-Bravo
+          quiet: true
+          soft_fail: true
+          output_format: cli,json
+          output_file_path: console,./TerraformWorkspaces/Alpha-Bravo/results.json
+      - name: Upload Checkov Results To S3
+        run: aws s3 cp ./results.json s3://awsb73-terraform-modules/checkov-results/results.json
+
+
+  terraform-initiate:
+    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
+    name: Stage_2 - Terraform Initialization, Formatting, Validation, And Workspace Creation
+    runs-on: ubuntu-latest
+    needs: terraform-checkov
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+    steps:
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+      - name: Print Runner Hostname
+        run: echo "$HOSTNAME"
+      - name: Print Branch Name
+        run: echo "$GITHUB_REF"
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Format
+        run: terraform fmt
+      - name: Terraform Validate
+        run: terraform validate
+      - name: Creating Terraform Workspaces
+        run: |
+          terraform workspace select dev || terraform workspace new dev
+          terraform workspace select prod || terraform workspace new prod
+      - name: List Terraform Workspaces
+        run: terraform workspace list
+
+
+  terraform-plan:
+    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
+    name: Stage_3 - Terraform Plan
+    runs-on: ubuntu-latest
+    needs: terraform-initiate
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+    steps:
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+      - name: Print Runner Hostname
+        run: echo "$HOSTNAME"
+      - name: Print Branch Name
+        run: echo "$GITHUB_REF"
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Format
+        run: terraform fmt
+      - name: Terraform Validate
+        run: terraform validate
+      - name: Print Branch Reference
+        run: echo "The Current Branch Is $GITHUB_REF"
+      - name: Terraform Plan
+        shell: bash
+        run: |
+          echo "ENV_DESTROY_DEV: ${{ env.ENV_DESTROY_DEV }}"
+          echo "ENV_DESTROY_PROD: ${{ env.ENV_DESTROY_PROD }}"
+          if [[ "$GITHUB_REF" == "refs/heads/development" && "${{ env.ENV_DESTROY_DEV }}" == "NO" ]]; then
+            echo "Running Terraform Plan For Development / Bravo"
+            terraform workspace select dev
+            terraform plan --var-file=Bravo.tfvars
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" && "${{ env.ENV_DESTROY_PROD }}" == "NO" ]]; then
+            echo "Running Terraform Plan For Production / Alpha"
+            terraform workspace select prod
+            terraform plan --var-file=Alpha.tfvars
+          else
+            echo "Nothing Is Deployed As The Branch Is Not Development Or Production."
+          fi
+
+
+  terraform-apply:
+    if: ${{ vars.TERRAFORM_DESTROY == 'NO' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
+    name: Stage_4 - Terraform Apply
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+    steps:
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+      - name: Print Runner Hostname
+        run: echo "$HOSTNAME"
+      - name: Print Branch Name
+        run: echo "$GITHUB_REF"
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Format
+        run: terraform fmt
+      - name: Terraform Validate
+        run: terraform validate
+      - name: Print Branch Reference
+        run: echo "The Current Branch Is $GITHUB_REF"
+      - name: Terraform Apply
+        shell: bash
+        run: |
+          echo "ENV_DESTROY_DEV: ${{ env.ENV_DESTROY_DEV }}"
+          echo "ENV_DESTROY_PROD: ${{ env.ENV_DESTROY_PROD }}"
+          if [[ "$GITHUB_REF" == "refs/heads/development" && "${{ env.ENV_DESTROY_DEV }}" == "NO" ]]; then
+            echo "Running Terraform Apply For Development / Bravo"
+            terraform workspace select dev
+            terraform apply --var-file=Bravo.tfvars --auto-approve
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" && "${{ env.ENV_DESTROY_PROD }}" == "NO" ]]; then
+            echo "Running Terraform Apply For Production / Alpha"
+            terraform workspace select prod
+            terraform apply --var-file=Alpha.tfvars --auto-approve
+          else
+            echo "Nothing Is Deployed As The Branch Is Not Development Or Production."
+          fi
+      - name: List Terraform Created Resources
+        run: terraform state list
+
+
+  terraform-destroy:
+    if: ${{ vars.TERRAFORM_DESTROY == 'YES' && (github.event_name == 'push' || github.event.pull_request.merged == true) }}
+    name: Stage_5 - Terraform Destroy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./TerraformWorkspaces/Alpha-Bravo
+    steps:
+      - name: Checkout The Code Repository
+        uses: actions/checkout@v5
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          target-role-arn: ${{ github.event_name == 'pull_request' && 'arn:aws:iam::886312446008:role/awsb73-cross-account-role' || 'arn:aws:iam::707256068335:role/awsb73-cross-account-role' }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "${{ env.TERRAFORM_VERSION }}"
+      - name: Print Runner Hostname
+        run: echo "$HOSTNAME"
+      - name: Print Branch Name
+        run: echo "$GITHUB_REF"
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Format
+        run: terraform fmt
+      - name: Terraform Validate
+        run: terraform validate
+      - name: Print Branch Reference
+        run: echo "The Current Branch Is $GITHUB_REF"
+      - name: Perform Terraform Destroy
+        shell: bash
+        run: |
+          echo "ENV_DESTROY_DEV: ${{ env.ENV_DESTROY_DEV }}"
+          echo "ENV_DESTROY_PROD: ${{ env.ENV_DESTROY_PROD }}"
+          if [[ "$GITHUB_REF" == "refs/heads/development" && "${{ env.ENV_DESTROY_DEV }}" == "YES" ]]; then
+            echo "Running Terraform Destroy For Development / Bravo"
+            terraform workspace select dev
+            terraform destroy --var-file=Bravo.tfvars --auto-approve
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" && "${{ env.ENV_DESTROY_PROD }}" == "YES" ]]; then
+            echo "Running Terraform Destroy For Production / Alpha"
+            terraform workspace select prod
+            terraform destroy --var-file=Alpha.tfvars --auto-approve
+          else
+            echo "Nothing Is Destroyed As The Branch Is Not Development Or Production."
+          fi
