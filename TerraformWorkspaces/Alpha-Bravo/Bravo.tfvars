@@ -1,0 +1,30 @@
+#Deploy To SREEYUTUBE Account.
+environment          = "dev"
+aws_region           = "us-east-1"
+vpc_cidr             = "10.30.0.0/16"
+vpc_name             = "BRAVO"
+public_cidr_block    = ["10.30.1.0/24", "10.30.2.0/24", "10.30.3.0/24"]
+private_cidr_block   = ["10.30.10.0/24", "10.30.20.0/24", "10.30.30.0/24"]
+azs                  = ["us-east-1a", "us-east-1b", "us-east-1c"]
+owner                = "JavaAppTeam"
+service_ports        = ["80", "443", "22", "3389", "3306"]
+rolename             = "bravo-testrole-dev"
+instanceprofilename  = "bravo-instprofile-dev"
+iam_policy_name      = "bravo-iampolicy-dev"
+instance_type        = "t2.micro"
+key_name             = "LaptopKey"
+project_name         = "bravo"
+db_subnet_group_name = "bravodev"
+allocated_storage    = "10"
+engine               = "mysql"
+engine_version       = "8.0.35"
+identifier           = "bravordsdev1"
+instance_class       = "db.t3.medium"
+db_name              = "awsb73devinst"
+username             = "adminsree"
+bucket_name          = "bravob73devbucket001"
+assume_rolename      = "arn:aws:iam::886312446008:role/awsb73-cross-account-role"
+create_efs           = false
+create_rds           = false
+efs_name             = "bravo-dev-efs"
+#To use multiple workspaces parallelly, you can assign environment variables to the workspace name and run terraform commands.
