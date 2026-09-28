@@ -36,9 +36,9 @@ runs:
           exit 1
         fi
 
-        PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d '.' -f 2)
+        PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
 
-        echo "$PAYLOAD" | base64 -d 2>/dev/null | jq '{iss, aud, sub}'
+        echo "$PAYLOAD" | base64 -d 2>/dev/null | jq '{iss, aud, sub}' || true
 
     - name: Configure Source AWS Credentials Using OIDC
       uses: aws-actions/configure-aws-credentials@v5
@@ -63,3 +63,4 @@ runs:
 # Batch 73 AWS OIDC Cross Account Authentication Flow
 # GitHub OIDC -> Source AWS Role -> Target Cross Account Role -> Terraform# OIDC diagnostic update - Batch 73
 # OIDC trust policy updated - test run
+# Test source OIDC role
