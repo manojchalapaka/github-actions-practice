@@ -15,6 +15,7 @@ on:
       - production
     paths-ignore:
       - 'ReadMe.md'
+
 env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -22,7 +23,9 @@ env:
   ENV_DESTROY: "YES"
   TERRAFORM_DESTROY: ${{ vars.TERRAFORM_DESTROY }}
   TERRAFORM_VERSION: "1.14.0"
+
 jobs:
+
   terraform-checkov:
     if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
     name: 'Stage 1 - Checkov Security Scanning For Terraform Code'
@@ -46,6 +49,7 @@ jobs:
       - name: Upload Checkov Results to S3 Bucket
         run: |
           aws s3 cp ./results.json s3://awsb73-terraform-modules-bucket/checkov-results/results.json
+
   terraform-initiate:
     if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
     name: 'Stage 2 - Terraform Initialization'
@@ -76,6 +80,7 @@ jobs:
           terraform workspace select production || terraform workspace new production
       - name: List Terraform Workspaces
         run: terraform workspace list
+
   terraform-plan:
     if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
     name: 'Stage 3 - Terraform Plan'
@@ -116,6 +121,7 @@ jobs:
             echo "Nothing Is Deployed As The Branch Is Not Development or Production."
             exit 1
           fi
+
   terraform-apply:
     if: ${{ vars.TERRAFORM_DESTROY == 'NO' }}
     name: 'Stage 4 - Terraform Apply'
@@ -154,9 +160,10 @@ jobs:
             echo "Nothing Is Deployed As The Branch Is Not Development or Production."
             exit 1
           fi
+
   terraform-destroy:
     if: ${{ vars.TERRAFORM_DESTROY == 'YES' }}
-    name: 'Stage 5 - Terraform Destroy'
+    name: 'Stage 5 - Terraform Destroy Resources'
     runs-on: ubuntu-latest
     defaults:
       run:
