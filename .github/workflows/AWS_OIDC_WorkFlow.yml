@@ -89,6 +89,7 @@ jobs:
           source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
           target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
+          debug-claims: "true"
 
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@v12
@@ -246,5 +247,3 @@ jobs:
 
       - name: Terraform Destroy (${{ needs.prepare.outputs.env_name }})
         run: terraform destroy -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -auto-approve
-
-# retest oidc trigger
