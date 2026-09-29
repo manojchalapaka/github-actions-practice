@@ -246,3 +246,5 @@ jobs:
 
       - name: Terraform Destroy (${{ needs.prepare.outputs.env_name }})
         run: terraform destroy -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -auto-approve
+
+# retest oidc trigger
