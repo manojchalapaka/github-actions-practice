@@ -1,29 +1,19 @@
-name: Terraform Deployment Pipeline With OIDC & Reusable Steps For Batch 73
+name: Terraform Deployment Pipeline With OIDC & Reusable Workflows For Batch 73
 
-# Required repo/org VARIABLES (Settings > Secrets and variables > Actions > Variables):
-#   AWS_REGION            us-east-1
-#   TERRAFORM_DESTROY     NO
-#   SOURCE_ROLE_ARN       arn:aws:iam::648377377983:role/awsb73-github-actions-oidc-role
-#   DEV_TARGET_ROLE_ARN   arn:aws:iam::707256068335:role/awsb73-cross-account-role   (Bravo / development)
-#   PROD_TARGET_ROLE_ARN  arn:aws:iam::886312446008:role/awsb73-cross-account-role   (Alpha / production)
-#   CHECKOV_BUCKET        awsb73-terraform-modules-bucket
+# Variables needed: AWS_REGION, TERRAFORM_DESTROY, SOURCE_ROLE_ARN,
+#                   DEV_TARGET_ROLE_ARN, PROD_TARGET_ROLE_ARN, CHECKOV_BUCKET
 #
-# Trigger behaviour:
-#   - push to "development"        -> deploys ONLY to Bravo/dev
-#   - push to "production"         -> deploys ONLY to Alpha/prod
-#   - PR merged into "production"  -> deploys ONLY to Alpha/prod
-#   Each run resolves exactly ONE environment; the other is never touched.
+#   push to development -> Bravo (707256068335) -> Bravo.tfvars -> workspace dev
+#   push to production  -> Alpha (886312446008) -> Alpha.tfvars -> workspace prod
 
 on:
   push:
     branches: [development, production]
     paths-ignore: ['ReadMe.md']
-
   pull_request:
     types: [closed]
     branches: [production]
     paths-ignore: ['ReadMe.md']
-
   workflow_dispatch:
 
 permissions:
@@ -35,326 +25,126 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  TERRAFORM_VERSION: "1.14.1"
   TF_DIR: ./TerraformWorkspaces/Alpha-Bravo
-  TF_IN_AUTOMATION: "true"
+  TERRAFORM_VERSION: "1.14.1"
 
 jobs:
-
-  # ---------------------------------------------------------------
-  # Stage 0 - Resolve environment
-  # ---------------------------------------------------------------
   prepare:
     name: Stage_0 - Resolve Target Environment
     runs-on: ubuntu-latest
-
     if: >-
-      (github.event_name == 'push' &&
-      (github.ref == 'refs/heads/development' ||
-      github.ref == 'refs/heads/production')) ||
+      github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-      github.event.pull_request.merged == true)
-
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     outputs:
       deploy: ${{ steps.resolve.outputs.deploy }}
       role_arn: ${{ steps.resolve.outputs.role_arn }}
       workspace: ${{ steps.resolve.outputs.workspace }}
       tfvars: ${{ steps.resolve.outputs.tfvars }}
       env_name: ${{ steps.resolve.outputs.env_name }}
-
     steps:
       - name: Resolve environment
         id: resolve
         shell: bash
-
         env:
           DEV_ROLE: ${{ vars.DEV_TARGET_ROLE_ARN }}
           PROD_ROLE: ${{ vars.PROD_TARGET_ROLE_ARN }}
-
         run: |
           set -e
-
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/development" ]]; then
-
-            echo "deploy=true"          >> "$GITHUB_OUTPUT"
-            echo "env_name=Bravo-dev"   >> "$GITHUB_OUTPUT"
-            echo "workspace=dev"        >> "$GITHUB_OUTPUT"
-            echo "tfvars=Bravo.tfvars"  >> "$GITHUB_OUTPUT"
-            echo "role_arn=$DEV_ROLE"   >> "$GITHUB_OUTPUT"
-
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/production" ]]; then
-
-            echo "deploy=true"          >> "$GITHUB_OUTPUT"
-            echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
-            echo "workspace=prod"       >> "$GITHUB_OUTPUT"
-            echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
-            echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
-
-          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" ]]; then
-
-            echo "deploy=true"          >> "$GITHUB_OUTPUT"
-            echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
-            echo "workspace=prod"       >> "$GITHUB_OUTPUT"
-            echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
-            echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
-
-          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/development" ]]; then
-
-            echo "deploy=true"          >> "$GITHUB_OUTPUT"
-            echo "env_name=Bravo-dev"   >> "$GITHUB_OUTPUT"
-            echo "workspace=dev"        >> "$GITHUB_OUTPUT"
-            echo "tfvars=Bravo.tfvars"  >> "$GITHUB_OUTPUT"
-            echo "role_arn=$DEV_ROLE"   >> "$GITHUB_OUTPUT"
-
-          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/production" ]]; then
-
-            echo "deploy=true"          >> "$GITHUB_OUTPUT"
-            echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
-            echo "workspace=prod"       >> "$GITHUB_OUTPUT"
-            echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
-            echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
-
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            BRANCH="$GITHUB_BASE_REF"
           else
+            BRANCH="$GITHUB_REF_NAME"
+          fi
 
+          if [[ "$BRANCH" == "development" ]]; then
+            {
+              echo "deploy=true"
+              echo "env_name=Bravo-dev"
+              echo "workspace=dev"
+              echo "tfvars=Bravo.tfvars"
+              echo "role_arn=$DEV_ROLE"
+            } >> "$GITHUB_OUTPUT"
+          elif [[ "$BRANCH" == "production" ]]; then
+            {
+              echo "deploy=true"
+              echo "env_name=Alpha-prod"
+              echo "workspace=prod"
+              echo "tfvars=Alpha.tfvars"
+              echo "role_arn=$PROD_ROLE"
+            } >> "$GITHUB_OUTPUT"
+          else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "Not development or production. Nothing to do."
-
           fi
+          echo "Resolved: $GITHUB_EVENT_NAME on $BRANCH"
 
-          echo "Resolved for: $GITHUB_EVENT_NAME on $GITHUB_REF"
-
-  # ---------------------------------------------------------------
-  # Stage 1 - Checkov
-  # ---------------------------------------------------------------
-  terraform-checkov:
-    name: Stage_1 - Checkov Security Scanning
-
+  checkov:
+    name: Stage_1 - Checkov
     needs: prepare
-
     if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
+    uses: ./.github/workflows/reusable-checkov.yml
+    with:
+      source_role_arn: ${{ vars.SOURCE_ROLE_ARN }}
+      target_role_arn: ${{ needs.prepare.outputs.role_arn }}
+      aws_region: ${{ vars.AWS_REGION }}
+      tf_dir: ${{ env.TF_DIR }}
+      workspace: ${{ needs.prepare.outputs.workspace }}
+      checkov_bucket: ${{ vars.CHECKOV_BUCKET }}
 
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - uses: actions/checkout@v5
-
-      - name: Configure AWS Credentials
-        uses: ./.github/reusable-steps/aws_creds
-
-        with:
-          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
-          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Run Checkov
-        uses: bridgecrewio/checkov-action@v12
-
-        with:
-          directory: ${{ env.TF_DIR }}
-          quiet: true
-          soft_fail: true
-          output_format: cli,json
-          output_file_path: console,checkov-results
-
-      - name: Locate and upload Checkov results to S3
-        run: |
-          set -e
-
-          FILE=$(find "${{ github.workspace }}" \
-            -type f \
-            -iname "*.json" \
-            -path "*checkov-results*" | head -n 1)
-
-          if [ -z "$FILE" ]; then
-            echo "No Checkov JSON output found under checkov-results/. Skipping upload."
-            exit 0
-          fi
-
-          echo "Found Checkov result file: $FILE"
-
-          aws s3 cp "$FILE" \
-            "s3://${{ vars.CHECKOV_BUCKET }}/checkov-results/${{ needs.prepare.outputs.workspace }}/${{ github.run_id }}/results.json"
-
-  # ---------------------------------------------------------------
-  # Stage 2 - Init / Format / Validate / Workspace
-  # ---------------------------------------------------------------
-  terraform-initiate:
-    name: Stage_2 - Init, Format, Validate, Workspace
-
-    needs: [prepare, terraform-checkov]
-
+  validate:
+    name: Stage_2 - Init, Format, Validate
+    needs: [prepare, checkov]
     if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
+    uses: ./.github/workflows/reusable-validate.yml
+    with:
+      source_role_arn: ${{ vars.SOURCE_ROLE_ARN }}
+      target_role_arn: ${{ needs.prepare.outputs.role_arn }}
+      aws_region: ${{ vars.AWS_REGION }}
+      tf_dir: ${{ env.TF_DIR }}
+      workspace: ${{ needs.prepare.outputs.workspace }}
+      terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ${{ env.TF_DIR }}
-
-    steps:
-
-      - uses: actions/checkout@v5
-
-      - name: Configure AWS Credentials
-        uses: ./.github/reusable-steps/aws_creds
-
-        with:
-          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
-          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: hashicorp/setup-terraform@v3
-
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - run: terraform init -input=false
-
-      - run: terraform fmt -check -recursive
-
-      - run: terraform validate
-
-      - name: Select or create workspace
-        run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
-
-      - run: terraform workspace list
-
-  # ---------------------------------------------------------------
-  # Stage 3 - Terraform Plan
-  # ---------------------------------------------------------------
-  terraform-plan:
-    name: Stage_3 - Terraform Plan
-
-    needs: [prepare, terraform-initiate]
-
+  plan:
+    name: Stage_3 - Plan
+    needs: [prepare, validate]
     if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
+    uses: ./.github/workflows/reusable-plan.yml
+    with:
+      source_role_arn: ${{ vars.SOURCE_ROLE_ARN }}
+      target_role_arn: ${{ needs.prepare.outputs.role_arn }}
+      aws_region: ${{ vars.AWS_REGION }}
+      tf_dir: ${{ env.TF_DIR }}
+      workspace: ${{ needs.prepare.outputs.workspace }}
+      tfvars: ${{ needs.prepare.outputs.tfvars }}
+      env_name: ${{ needs.prepare.outputs.env_name }}
+      terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ${{ env.TF_DIR }}
-
-    steps:
-
-      - uses: actions/checkout@v5
-
-      - name: Configure AWS Credentials
-        uses: ./.github/reusable-steps/aws_creds
-
-        with:
-          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
-          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: hashicorp/setup-terraform@v3
-
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - run: terraform init -input=false
-
-      - run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
-
-      - name: Terraform Plan (${{ needs.prepare.outputs.env_name }})
-        run: terraform plan -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -out=tfplan
-
-      - name: Upload plan
-        uses: actions/upload-artifact@v4
-
-        with:
-          name: tfplan-${{ needs.prepare.outputs.workspace }}
-          path: ${{ env.TF_DIR }}/tfplan
-          retention-days: 3
-
-  # ---------------------------------------------------------------
-  # Stage 4 - Terraform Apply
-  # ---------------------------------------------------------------
-  terraform-apply:
-    name: Stage_4 - Terraform Apply
-
-    needs: [prepare, terraform-plan]
-
+  apply:
+    name: Stage_4 - Apply
+    needs: [prepare, plan]
     if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'NO' }}
+    uses: ./.github/workflows/reusable-apply.yml
+    with:
+      source_role_arn: ${{ vars.SOURCE_ROLE_ARN }}
+      target_role_arn: ${{ needs.prepare.outputs.role_arn }}
+      aws_region: ${{ vars.AWS_REGION }}
+      tf_dir: ${{ env.TF_DIR }}
+      workspace: ${{ needs.prepare.outputs.workspace }}
+      env_name: ${{ needs.prepare.outputs.env_name }}
+      terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ${{ env.TF_DIR }}
-
-    steps:
-
-      - uses: actions/checkout@v5
-
-      - name: Configure AWS Credentials
-        uses: ./.github/reusable-steps/aws_creds
-
-        with:
-          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
-          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: hashicorp/setup-terraform@v3
-
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - uses: actions/download-artifact@v4
-
-        with:
-          name: tfplan-${{ needs.prepare.outputs.workspace }}
-          path: ${{ env.TF_DIR }}
-
-      - run: terraform init -input=false
-
-      - run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
-
-      - name: Terraform Apply (${{ needs.prepare.outputs.env_name }})
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: List resources
-        run: terraform state list
-
-  # ---------------------------------------------------------------
-  # Stage 5 - Terraform Destroy
-  # ---------------------------------------------------------------
-  terraform-destroy:
-    name: Stage_5 - Terraform Destroy
-
+  destroy:
+    name: Stage_5 - Destroy
     needs: prepare
-
     if: ${{ needs.prepare.outputs.deploy == 'true' && vars.TERRAFORM_DESTROY == 'YES' }}
-
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ${{ env.TF_DIR }}
-
-    steps:
-
-      - uses: actions/checkout@v5
-
-      - name: Configure AWS Credentials
-        uses: ./.github/reusable-steps/aws_creds
-
-        with:
-          source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
-          target-role-arn: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: hashicorp/setup-terraform@v3
-
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - run: terraform init -input=false
-
-      - run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
-
-      - name: Terraform Destroy (${{ needs.prepare.outputs.env_name }})
-        run: terraform destroy -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -auto-approve
+    uses: ./.github/workflows/reusable-destroy.yml
+    with:
+      source_role_arn: ${{ vars.SOURCE_ROLE_ARN }}
+      target_role_arn: ${{ needs.prepare.outputs.role_arn }}
+      aws_region: ${{ vars.AWS_REGION }}
+      tf_dir: ${{ env.TF_DIR }}
+      workspace: ${{ needs.prepare.outputs.workspace }}
+      tfvars: ${{ needs.prepare.outputs.tfvars }}
+      env_name: ${{ needs.prepare.outputs.env_name }}
+      terraform_version: ${{ env.TERRAFORM_VERSION }}

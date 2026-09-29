@@ -1,0 +1,43 @@
+name: Reusable Terraform Destroy
+
+on:
+  workflow_call:
+    inputs:
+      source_role_arn:   { type: string, required: true }
+      target_role_arn:   { type: string, required: true }
+      aws_region:        { type: string, required: true }
+      tf_dir:            { type: string, required: true }
+      workspace:         { type: string, required: true }
+      tfvars:            { type: string, required: true }
+      env_name:          { type: string, required: true }
+      terraform_version: { type: string, required: true }
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.tf_dir }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          source-role-arn: ${{ inputs.source_role_arn }}
+          target-role-arn: ${{ inputs.target_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - run: terraform init -input=false
+      - run: terraform workspace select -or-create "${{ inputs.workspace }}"
+
+      - name: Terraform Destroy (${{ inputs.env_name }})
+        run: terraform destroy -input=false --var-file="${{ inputs.tfvars }}" -auto-approve

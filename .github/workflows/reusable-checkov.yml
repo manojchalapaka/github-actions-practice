@@ -1,0 +1,49 @@
+name: Reusable Checkov
+
+on:
+  workflow_call:
+    inputs:
+      source_role_arn: { type: string, required: true }
+      target_role_arn: { type: string, required: true }
+      aws_region:      { type: string, required: true }
+      tf_dir:          { type: string, required: true }
+      workspace:       { type: string, required: true }
+      checkov_bucket:  { type: string, required: true }
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  checkov:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS Credentials
+        uses: ./.github/reusable-steps/aws_creds
+        with:
+          source-role-arn: ${{ inputs.source_role_arn }}
+          target-role-arn: ${{ inputs.target_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ inputs.tf_dir }}
+          quiet: true
+          soft_fail: true
+          output_format: cli,json
+          output_file_path: console,checkov-results
+
+      - name: Upload Checkov results to S3
+        shell: bash
+        run: |
+          set -e
+          FILE=$(find "${{ github.workspace }}" -type f -iname "*.json" -path "*checkov-results*" | head -n 1)
+          if [ -z "$FILE" ]; then
+            echo "No Checkov JSON output found. Skipping upload."
+            exit 0
+          fi
+          aws s3 cp "$FILE" \
+            "s3://${{ inputs.checkov_bucket }}/checkov-results/${{ inputs.workspace }}/${{ github.run_id }}/results.json"
