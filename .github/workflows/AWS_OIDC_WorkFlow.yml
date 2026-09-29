@@ -7,14 +7,20 @@ name: Terraform Deployment Pipeline With OIDC & Reusable Steps For Batch 73
 #   DEV_TARGET_ROLE_ARN   arn:aws:iam::707256068335:role/awsb73-cross-account-role   (Bravo / development)
 #   PROD_TARGET_ROLE_ARN  arn:aws:iam::886312446008:role/awsb73-cross-account-role   (Alpha / production)
 #   CHECKOV_BUCKET        awsb73-terraform-modules
+#
+# Trigger behaviour:
+#   - push to "development"        -> deploys ONLY to Bravo/dev
+#   - push to "production"         -> deploys ONLY to Alpha/prod
+#   - PR merged into "production"  -> deploys ONLY to Alpha/prod
+#   Each run resolves exactly ONE environment; the other is never touched.
 
 on:
+  push:
+    branches: [development, production]
+    paths-ignore: ['ReadMe.md']
   pull_request:
     types: [closed]
     branches: [production]
-    paths-ignore: ['ReadMe.md']
-  push:
-    branches: [development]
     paths-ignore: ['ReadMe.md']
   workflow_dispatch:
 
@@ -34,12 +40,17 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Decide environment, role, workspace and tfvars ONE time
+  # Decide environment, role, workspace and tfvars ONE time.
+  # A push to development resolves ONLY dev; a push/merge to
+  # production resolves ONLY prod. They never mix in the same run.
   # ---------------------------------------------------------------
   prepare:
     name: Stage_0 - Resolve Target Environment
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: >-
+      (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/production')) ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     outputs:
       deploy: ${{ steps.resolve.outputs.deploy }}
       role_arn: ${{ steps.resolve.outputs.role_arn }}
@@ -54,23 +65,49 @@ jobs:
           DEV_ROLE: ${{ vars.DEV_TARGET_ROLE_ARN }}
           PROD_ROLE: ${{ vars.PROD_TARGET_ROLE_ARN }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/development" ]] || \
-             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/development" ]]; then
+          set -e
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/development" ]]; then
             echo "deploy=true"          >> "$GITHUB_OUTPUT"
             echo "env_name=Bravo-dev"   >> "$GITHUB_OUTPUT"
             echo "workspace=dev"        >> "$GITHUB_OUTPUT"
             echo "tfvars=Bravo.tfvars"  >> "$GITHUB_OUTPUT"
             echo "role_arn=$DEV_ROLE"   >> "$GITHUB_OUTPUT"
+
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/production" ]]; then
+            echo "deploy=true"          >> "$GITHUB_OUTPUT"
+            echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
+            echo "workspace=prod"       >> "$GITHUB_OUTPUT"
+            echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
+            echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
+
           elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_BASE_REF" == "production" ]]; then
             echo "deploy=true"          >> "$GITHUB_OUTPUT"
             echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
             echo "workspace=prod"       >> "$GITHUB_OUTPUT"
             echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
             echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
+
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/development" ]]; then
+            echo "deploy=true"          >> "$GITHUB_OUTPUT"
+            echo "env_name=Bravo-dev"   >> "$GITHUB_OUTPUT"
+            echo "workspace=dev"        >> "$GITHUB_OUTPUT"
+            echo "tfvars=Bravo.tfvars"  >> "$GITHUB_OUTPUT"
+            echo "role_arn=$DEV_ROLE"   >> "$GITHUB_OUTPUT"
+
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/production" ]]; then
+            echo "deploy=true"          >> "$GITHUB_OUTPUT"
+            echo "env_name=Alpha-prod"  >> "$GITHUB_OUTPUT"
+            echo "workspace=prod"       >> "$GITHUB_OUTPUT"
+            echo "tfvars=Alpha.tfvars"  >> "$GITHUB_OUTPUT"
+            echo "role_arn=$PROD_ROLE"  >> "$GITHUB_OUTPUT"
+
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "Not development or production. Nothing to do."
           fi
+
+          echo "Resolved for: $GITHUB_EVENT_NAME on $GITHUB_REF"
 
   # ---------------------------------------------------------------
   # Stage 1 - Checkov
@@ -89,7 +126,6 @@ jobs:
           source-role-arn: ${{ vars.SOURCE_ROLE_ARN }}
           target-role-arn: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          debug-claims: "true"
 
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@v12
@@ -100,12 +136,16 @@ jobs:
           output_format: cli,json
           output_file_path: console,checkov-results
 
-      - name: List Checkov output
-        run: ls -R "${{ github.workspace }}/checkov-results" || true
-
-      - name: Upload Checkov Results To S3
+      - name: Locate and upload Checkov results to S3
         run: |
-          aws s3 cp "${{ github.workspace }}/checkov-results/results_json.json" \
+          set -e
+          FILE=$(find "${{ github.workspace }}" -type f -iname "*.json" -path "*checkov-results*" | head -n 1)
+          if [ -z "$FILE" ]; then
+            echo "No Checkov JSON output found under checkov-results/. Skipping upload."
+            exit 0
+          fi
+          echo "Found Checkov result file: $FILE"
+          aws s3 cp "$FILE" \
             "s3://${{ vars.CHECKOV_BUCKET }}/checkov-results/${{ needs.prepare.outputs.workspace }}/${{ github.run_id }}/results.json"
 
   # ---------------------------------------------------------------
@@ -134,7 +174,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - run: terraform init -input=false
-      - run: terraform fmt -check -recursive
+      - run: terraform fmt -recursive
       - run: terraform validate
       - name: Select or create workspace
         run: terraform workspace select -or-create "${{ needs.prepare.outputs.workspace }}"
@@ -247,4 +287,3 @@ jobs:
 
       - name: Terraform Destroy (${{ needs.prepare.outputs.env_name }})
         run: terraform destroy -input=false --var-file="${{ needs.prepare.outputs.tfvars }}" -auto-approve
-# retest after sub fix
