@@ -17,7 +17,7 @@ inputs:
   debug-claims:
     description: Print OIDC iss/aud/sub claims for troubleshooting
     required: false
-    default: "false"
+    default: "true"
 
 runs:
   using: composite
@@ -54,6 +54,7 @@ runs:
       with:
         role-to-assume: ${{ inputs.source-role-arn }}
         role-session-name: gha-source-${{ github.run_id }}
+        disable-retry: true
         aws-region: ${{ inputs.aws-region }}
 
     - name: Assume target cross-account role
