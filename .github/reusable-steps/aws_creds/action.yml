@@ -1,34 +1,72 @@
 name: Configure AWS Credentials Using OIDC
-description: Configure AWS credentials using GitHub OIDC and cross-account role chaining
+description: GitHub OIDC -> source AWS role -> target cross-account role
 
 inputs:
+  source-role-arn:
+    description: Role in the central account that trusts GitHub OIDC
+    required: true
+
   target-role-arn:
-    description: Target cross-account IAM role ARN
+    description: Cross-account role to assume from the source role
     required: true
 
   aws-region:
     description: AWS region
     required: true
 
+  debug-claims:
+    description: Print OIDC iss/aud/sub claims for troubleshooting
+    required: false
+    default: "false"
+
 runs:
   using: composite
-  steps:
 
-    - name: Configure Source AWS Credentials Using OIDC
+  steps:
+    - name: Show GitHub OIDC claims
+      if: ${{ inputs.debug-claims == 'true' }}
+      shell: bash
+      run: |
+        set -e
+
+        RESPONSE=$(curl -sS \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+
+        TOKEN=$(echo "$RESPONSE" | jq -r '.value')
+
+        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          echo "No OIDC token found."
+          echo "Check permissions: id-token: write"
+          exit 1
+        fi
+
+        PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
+
+        while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do
+          PAYLOAD="${PAYLOAD}="
+        done
+
+        echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub}'
+
+    - name: Assume source role via OIDC
       uses: aws-actions/configure-aws-credentials@v5
       with:
-        role-to-assume: arn:aws:iam::648377377983:role/awsb73-github-actions-oidc-role
-        role-session-name: github-actions-oidc-role
+        role-to-assume: ${{ inputs.source-role-arn }}
+        role-session-name: gha-source-${{ github.run_id }}
+        disable-retry: true
         aws-region: ${{ inputs.aws-region }}
 
-    - name: Configure Target Cross Account Role
+    - name: Assume target cross-account role
       uses: aws-actions/configure-aws-credentials@v5
       with:
         role-to-assume: ${{ inputs.target-role-arn }}
-        role-session-name: github-actions-cross-account-role
+        role-session-name: gha-target-${{ github.run_id }}
         role-chaining: true
+        role-skip-session-tagging: true
         aws-region: ${{ inputs.aws-region }}
 
-    - name: Verify AWS Identity
+    - name: Verify AWS identity
       shell: bash
-      run: aws sts get-caller-identity
+      run: |
+        aws sts get-caller-identity
