@@ -1,39 +1,52 @@
 name: Configure AWS Credentials Using OIDC
-description: GitHub OIDC -> source AWS role -> target cross-account role (role chaining)
+description: GitHub OIDC -> source AWS role -> target cross-account role
 
 inputs:
   source-role-arn:
     description: Role in the central account that trusts GitHub OIDC
     required: true
+
   target-role-arn:
     description: Cross-account role to assume from the source role
     required: true
+
   aws-region:
     description: AWS region
     required: true
+
   debug-claims:
-    description: Print OIDC iss/aud/sub claims (for troubleshooting only)
+    description: Print OIDC iss/aud/sub claims for troubleshooting
     required: false
     default: "false"
 
 runs:
   using: composite
+
   steps:
-    - name: Show GitHub OIDC claims (debug)
+    - name: Show GitHub OIDC claims
       if: ${{ inputs.debug-claims == 'true' }}
       shell: bash
       run: |
+        set -e
+
         RESPONSE=$(curl -sS \
           -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
           "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+
         TOKEN=$(echo "$RESPONSE" | jq -r '.value')
+
         if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-          echo "No OIDC token. Check 'permissions: id-token: write' in the workflow."
+          echo "No OIDC token found."
+          echo "Check permissions: id-token: write"
           exit 1
         fi
+
         PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
-        # restore base64 padding
-        while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do PAYLOAD="${PAYLOAD}="; done
+
+        while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do
+          PAYLOAD="${PAYLOAD}="
+        done
+
         echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub}'
 
     - name: Assume source role via OIDC
@@ -54,4 +67,5 @@ runs:
 
     - name: Verify AWS identity
       shell: bash
-      run: aws sts get-caller-identity
+      run: |
+        aws sts get-caller-identity
