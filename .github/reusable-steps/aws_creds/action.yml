@@ -17,7 +17,7 @@ inputs:
   debug-claims:
     description: Print OIDC iss/aud/sub claims for troubleshooting
     required: false
-    default: "true"
+    default: "false"
 
 runs:
   using: composite
